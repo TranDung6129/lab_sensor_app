@@ -1,0 +1,17 @@
+{
+  "connection": {
+    "sensor_port": "/dev/ttyUSB0",
+    "sampling_rate": 200
+  },
+  "storage": {
+    "db_type": "HDF5",
+    "hdf5_path": "",
+    "retention_days": 30
+  },
+  "ui_theme": "Light",
+  "cicd": {
+    "github_repo": "",
+    "webhook_url": "",
+    "auto_update": false
+  }
+}
