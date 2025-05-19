@@ -30,6 +30,11 @@ class DashboardScreen(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(20)
         
+        # Title
+        title = QLabel("Dashboard")
+        title.setStyleSheet("font-size: 24px; font-weight: bold;")
+        layout.addWidget(title)
+        
         # Metrics cards row
         metrics_layout = QHBoxLayout()
         metrics_layout.setSpacing(20)

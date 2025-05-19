@@ -13,16 +13,18 @@ from .screens.spreadsheet import SpreadsheetScreen
 from .screens.anomaly import AnomalyScreen
 from .screens.plugins import PluginsScreen
 from .screens.settings import SettingsScreen
+from .screens.sensor_management import SensorManagementScreen
 
 logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
     """Main window of the Lab Sensor Application with modern UI layout."""
     
-    def __init__(self, processor, config=None):
+    def __init__(self, processor, sensor_manager=None):
         super().__init__()
         self.processor = processor
-        self.config = config
+        self.sensor_manager = sensor_manager
+        self.config = None
         
         # Initialize UI components
         self.setup_ui()
@@ -137,6 +139,7 @@ class MainWindow(QMainWindow):
         # Navigation buttons
         nav_items = [
             ("Dashboard", "dashboard"),
+            ("Management", "management"),
             ("Realtime", "realtime"),
             ("Frequency", "frequency"),
             ("Spreadsheet", "spreadsheet"),
@@ -200,6 +203,7 @@ class MainWindow(QMainWindow):
         """Initialize all screen widgets."""
         # Create screen instances
         self.dashboard = DashboardScreen(self.processor)
+        self.management = SensorManagementScreen(self.sensor_manager, self.processor)
         self.realtime = RealtimeScreen(self.processor)
         self.frequency = FrequencyScreen(self.processor)
         self.spreadsheet = SpreadsheetScreen(self.processor)
@@ -209,6 +213,7 @@ class MainWindow(QMainWindow):
         
         # Add screens to stack
         self.content_stack.addWidget(self.dashboard)
+        self.content_stack.addWidget(self.management)
         self.content_stack.addWidget(self.realtime)
         self.content_stack.addWidget(self.frequency)
         self.content_stack.addWidget(self.spreadsheet)
