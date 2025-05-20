@@ -25,7 +25,7 @@ def main():
     
     # Initialize core components
     processor = SensorProcessor()
-    sensor_manager = SensorManager()
+    sensor_manager = SensorManager(processor)
     
     # Create and show main window
     window = MainWindow(processor, sensor_manager)

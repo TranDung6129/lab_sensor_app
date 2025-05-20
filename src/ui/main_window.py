@@ -248,10 +248,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event."""
-        # Stop any running processes
-        if hasattr(self, 'processor') and self.processor:
-            self.processor.stop()
-        
         # Stop status update timer
         if hasattr(self, 'status_timer'):
             self.status_timer.stop()
