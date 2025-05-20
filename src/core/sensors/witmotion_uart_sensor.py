@@ -126,6 +126,7 @@ class WitMotionUARTSensor(BaseSensor):
                     bytes_to_read = self.serial_connection.in_waiting
                     raw_bytes = self.serial_connection.read(bytes_to_read)
                     if raw_bytes:
+                        logger.debug(f"[{self.name}] Raw bytes received: {raw_bytes.hex(' ')}")
                         for byte_val in raw_bytes:
                             self.parser.process_byte(byte_val) # Parser sẽ tích lũy byte
 
@@ -133,11 +134,13 @@ class WitMotionUARTSensor(BaseSensor):
                         # Logic ở đây sẽ quyết định khi nào một "bản tin hoàn chỉnh" được hình thành
                         newly_parsed = self.parser.get_parsed_data() # Lấy data từ cache của parser
                         if newly_parsed:
+                            logger.debug(f"[{self.name}] Newly parsed data: {newly_parsed}")
                             self._current_data_packet.update(newly_parsed)
                             # Ghi nhận loại gói tin vừa xử lý từ parser (nếu parser có cung cấp thông tin này)
                             if hasattr(self.parser, '_last_packet_type_processed') and \
                                self.parser._last_packet_type_processed is not None:
                                 self._received_packets_in_current_cycle.add(self.parser._last_packet_type_processed)
+                                logger.debug(f"[{self.name}] Current received packets in cycle: {self._received_packets_in_current_cycle}")
 
                             # Kiểm tra xem đã nhận đủ các gói tin trong một chu kỳ chưa
                             # (ví dụ: ACC, GYRO, ANGLE)
@@ -145,8 +148,9 @@ class WitMotionUARTSensor(BaseSensor):
                                 if self.on_data_callback and self._current_data_packet:
                                     self.last_data = self._current_data_packet.copy() # Lưu lại cho get_sensor_info
                                     self.data_timestamp = time.time()
+                                    logger.info(f"[{self.name}] Emitting complete data cycle with packets: {self._received_packets_in_current_cycle}")
+                                    logger.debug(f"[{self.name}] Emitted data: {self.last_data}")
                                     self.on_data_callback(self.sensor_id, self.last_data)
-                                    # logger.debug(f"[{self.name}] Emitted complete data cycle: {self.last_data.keys()}")
                                 # Reset cho chu kỳ mới
                                 self._current_data_packet.clear()
                                 self._received_packets_in_current_cycle.clear()

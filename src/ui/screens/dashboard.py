@@ -10,6 +10,13 @@ logger = logging.getLogger(__name__)
 class DashboardScreen(QWidget):
     """Dashboard screen showing system overview and quick metrics."""
     
+    # Mapping từ tên hiển thị sang data_key kỹ thuật
+    CHANNEL_TO_DATA_KEY = {
+        "Acceleration": "accX",  # Sử dụng accX cho mini plot acceleration
+        "Angular Velocity": "gyroX",  # Sử dụng gyroX cho mini plot velocity
+        "Angle": "angleX"  # Sử dụng angleX cho mini plot displacement
+    }
+    
     def __init__(self, processor):
         super().__init__()
         self.processor = processor
@@ -257,37 +264,50 @@ class DashboardScreen(QWidget):
         """Update the mini plots with latest data."""
         if not self.processor:
             return
-            
-        try:
-            # Get latest data from processor
-            if hasattr(self.processor, 'get_latest_data'):
-                data = self.processor.get_latest_data()
-                
-                # Update acceleration plot
-                if 'acceleration' in data:
-                    acc_plot = self.acc_plot.findChild(pg.PlotWidget)
-                    acc_plot.clear()
-                    acc_plot.plot(data['acceleration']['time'], 
-                                data['acceleration']['value'],
-                                pen='b')
-                
-                # Update velocity plot
-                if 'velocity' in data:
-                    vel_plot = self.vel_plot.findChild(pg.PlotWidget)
-                    vel_plot.clear()
-                    vel_plot.plot(data['velocity']['time'],
-                                data['velocity']['value'],
-                                pen='g')
-                
-                # Update displacement plot
-                if 'displacement' in data:
-                    disp_plot = self.disp_plot.findChild(pg.PlotWidget)
-                    disp_plot.clear()
-                    disp_plot.plot(data['displacement']['time'],
-                                 data['displacement']['value'],
-                                 pen='r')
-        except Exception as e:
-            logger.error(f"Error updating mini plots: {e}")
+
+        # Get active sensors
+        active_sensors = self.processor.get_active_sensors_info()
+        if not active_sensors:
+            logger.debug("No active sensors found for mini plots")
+            return
+
+        # Use first sensor for now (could be made configurable)
+        sensor_id = active_sensors[0]['id']
+        sensor_name = active_sensors[0]['name']
+        logger.debug(f"[{sensor_name}] Updating mini plots for sensor {sensor_id}")
+
+        # Update acceleration plot
+        acc_data_key = self.CHANNEL_TO_DATA_KEY["Acceleration"]
+        acc_timestamps, acc_values = self.processor.get_data_for_display(sensor_id, acc_data_key, 100)
+        if acc_timestamps and acc_values:
+            logger.debug(f"[{sensor_name}] Acceleration data received - Timestamps: {len(acc_timestamps)}, Values: {len(acc_values)}")
+            self.acc_plot.findChild(pg.PlotWidget).clear()
+            self.acc_plot.findChild(pg.PlotWidget).plot(acc_timestamps, acc_values, pen='b')
+        else:
+            logger.debug(f"[{sensor_name}] No acceleration data available (key: {acc_data_key})")
+            self.acc_plot.findChild(pg.PlotWidget).clear()
+
+        # Update velocity plot
+        vel_data_key = self.CHANNEL_TO_DATA_KEY["Angular Velocity"]
+        vel_timestamps, vel_values = self.processor.get_data_for_display(sensor_id, vel_data_key, 100)
+        if vel_timestamps and vel_values:
+            logger.debug(f"[{sensor_name}] Angular velocity data received - Timestamps: {len(vel_timestamps)}, Values: {len(vel_values)}")
+            self.vel_plot.findChild(pg.PlotWidget).clear()
+            self.vel_plot.findChild(pg.PlotWidget).plot(vel_timestamps, vel_values, pen='g')
+        else:
+            logger.debug(f"[{sensor_name}] No angular velocity data available (key: {vel_data_key})")
+            self.vel_plot.findChild(pg.PlotWidget).clear()
+
+        # Update displacement plot
+        disp_data_key = self.CHANNEL_TO_DATA_KEY["Angle"]
+        disp_timestamps, disp_values = self.processor.get_data_for_display(sensor_id, disp_data_key, 100)
+        if disp_timestamps and disp_values:
+            logger.debug(f"[{sensor_name}] Angle data received - Timestamps: {len(disp_timestamps)}, Values: {len(disp_values)}")
+            self.disp_plot.findChild(pg.PlotWidget).clear()
+            self.disp_plot.findChild(pg.PlotWidget).plot(disp_timestamps, disp_values, pen='r')
+        else:
+            logger.debug(f"[{sensor_name}] No angle data available (key: {disp_data_key})")
+            self.disp_plot.findChild(pg.PlotWidget).clear()
 
     def update_alerts(self):
         """Update the alerts table with latest alerts."""

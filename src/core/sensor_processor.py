@@ -61,6 +61,9 @@ class SensorProcessor:
             timestamp = time.time() # Sử dụng thời gian hệ thống nếu không có timestamp từ cảm biến
         self.global_data_timestamp = timestamp # Cập nhật timestamp toàn cục
 
+        sensor_name = self.active_sensors_config.get(sensor_id, {}).get('name', sensor_id)
+        logger.debug(f"[{sensor_name}] Processing data at {timestamp:.3f}s: {data}")
+
         if sensor_id not in self.sensor_data_buffers:
             self.sensor_data_buffers[sensor_id] = {} # Khởi tạo nếu chưa có (có thể xảy ra nếu add_sensor chưa kịp chạy)
 
@@ -72,6 +75,7 @@ class SensorProcessor:
                     logger.info(f"Discovered new data key '{key}' for sensor {sensor_id}")
 
             self.sensor_data_buffers[sensor_id][key].append((timestamp, value))
+            logger.debug(f"[{sensor_name}] Added data to buffer - Key: {key}, Timestamp: {timestamp:.3f}s, Value: {value}")
 
         self.fps_counter += 1
         current_time = time.perf_counter()
@@ -91,8 +95,12 @@ class SensorProcessor:
         Returns:
             Tuple (timestamps, values) hoặc (None, None) nếu không có dữ liệu.
         """
+        sensor_name = self.active_sensors_config.get(sensor_id, {}).get('name', sensor_id)
         if sensor_id in self.sensor_data_buffers and data_key in self.sensor_data_buffers[sensor_id]:
             buffer = self.sensor_data_buffers[sensor_id][data_key]
+            buffer_size = len(buffer)
+            logger.debug(f"[{sensor_name}] Querying data buffer - Key: {data_key}, Buffer size: {buffer_size}, Requested points: {num_points}")
+            
             if not buffer:
                 return None, None
 

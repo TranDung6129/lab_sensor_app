@@ -10,6 +10,19 @@ logger = logging.getLogger(__name__)
 class RealtimeScreen(QWidget):
     """Realtime data visualization screen with time-series plots."""
     
+    # Mapping từ tên hiển thị sang data_key kỹ thuật
+    CHANNEL_TO_DATA_KEY = {
+        "Acceleration X": "accX",
+        "Acceleration Y": "accY",
+        "Acceleration Z": "accZ",
+        "Angular Velocity X": "gyroX",
+        "Angular Velocity Y": "gyroY",
+        "Angular Velocity Z": "gyroZ",
+        "Angle X": "angleX",
+        "Angle Y": "angleY",
+        "Angle Z": "angleZ"
+    }
+    
     def __init__(self, processor):
         super().__init__()
         self.processor = processor
@@ -137,9 +150,8 @@ class RealtimeScreen(QWidget):
         layout.addWidget(channel_label)
         
         self.channel_combo = QComboBox()
-        self.channel_combo.addItems(["Acceleration X", "Acceleration Y", "Acceleration Z",
-                                   "Velocity X", "Velocity Y", "Velocity Z",
-                                   "Displacement X", "Displacement Y", "Displacement Z"])
+        # Sử dụng keys từ CHANNEL_TO_DATA_KEY để đảm bảo tính nhất quán
+        self.channel_combo.addItems(self.CHANNEL_TO_DATA_KEY.keys())
         layout.addWidget(self.channel_combo)
         
         # Add spacer
@@ -188,25 +200,43 @@ class RealtimeScreen(QWidget):
             return
             
         try:
-            # Get latest data from processor
-            if hasattr(self.processor, 'get_latest_data'):
-                data = self.processor.get_latest_data()
-                
-                # Get selected channel
-                channel = self.channel_combo.currentText().lower()
-                
-                # Update plot if data exists for selected channel
-                if channel in data:
-                    self.plot_widget.clear()
-                    self.plot_widget.plot(data[channel]['time'],
-                                        data[channel]['value'],
-                                        name=channel,
-                                        pen='b')
-                    
-                    # Auto-range if needed
-                    self.plot_widget.enableAutoRange()
+            # Get active sensors
+            active_sensors = self.processor.get_active_sensors_info()
+            if not active_sensors:
+                logger.debug("No active sensors found for realtime plot")
+                self.plot_widget.clear()
+                return
+
+            # Use first sensor for now (could be made configurable)
+            sensor_id = active_sensors[0]['id']
+            sensor_name = active_sensors[0]['name']
+
+            # Get selected channel and convert to actual data key
+            selected_channel = self.channel_combo.currentText()
+            actual_data_key = self.CHANNEL_TO_DATA_KEY.get(selected_channel)
+            
+            if not actual_data_key:
+                logger.warning(f"[{sensor_name}] No data key mapping found for channel: {selected_channel}")
+                self.plot_widget.clear()
+                return
+
+            logger.debug(f"[{sensor_name}] Querying data for sensor {sensor_id}, channel: {selected_channel} (key: {actual_data_key})")
+
+            # Get data from processor
+            timestamps, values = self.processor.get_data_for_display(sensor_id, actual_data_key, 200)  # Get 200 points
+            
+            if timestamps and values:
+                logger.debug(f"[{sensor_name}] Data received - Timestamps: {len(timestamps)}, Values: {len(values)}")
+                self.plot_widget.clear()
+                self.plot_widget.plot(timestamps, values, name=selected_channel, pen='b')
+                self.plot_widget.enableAutoRange()
+            else:
+                logger.debug(f"[{sensor_name}] No data available for channel {selected_channel} (key: {actual_data_key})")
+                self.plot_widget.clear()
+
         except Exception as e:
-            logger.error(f"Error updating realtime plot: {e}")
+            logger.error(f"Error updating realtime plot: {e}", exc_info=True)
+            self.plot_widget.clear()
 
     def closeEvent(self, event):
         """Handle widget close event."""
