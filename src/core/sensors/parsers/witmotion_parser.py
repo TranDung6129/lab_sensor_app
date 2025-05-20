@@ -92,54 +92,63 @@ class WitmotionParser:
         logger.info(f"WitmotionParser ranges updated: Acc={self.acc_range}g, Gyro={self.gyro_range}°/s, Angle={self.angle_range}°")
 
 
+    def _verify_checksum(self, packet: bytes) -> bool:
+        """
+        Kiểm tra checksum của gói tin WitMotion.
+        Checksum là tổng của tất cả các byte trước nó (không bao gồm byte checksum).
+        """
+        if len(packet) < 11:  # Gói tin phải có ít nhất 11 byte
+            return False
+            
+        # Tính tổng của 10 byte đầu tiên
+        calculated_sum = sum(packet[:10]) & 0xFF
+        # Byte cuối cùng là checksum
+        received_checksum = packet[10]
+        
+        return calculated_sum == received_checksum
+
     def process_byte(self, byte_val: int) -> None:
         """
-        Xử lý từng byte dữ liệu nhận được.
-        Khi một gói tin hoàn chỉnh và hợp lệ được xử lý, self.on_complete_packet sẽ được gọi.
+        Xử lý từng byte nhận được từ cảm biến.
+        Args:
+            byte_val: Giá trị byte (0-255) nhận được từ cảm biến.
         """
         self._buffer.append(byte_val)
+        logger.debug(f"Processing byte: 0x{byte_val:02X}, Current buffer: {self._buffer.hex(' ')}")
 
-        while len(self._buffer) >= self.PACKET_SIZE:
-            # Tìm header 0x55
-            try:
-                header_index = self._buffer.index(self.PACKET_HEADER)
-                if header_index > 0:
-                    # Loại bỏ các byte rác trước header
-                    logger.debug(f"Discarding {header_index} garbage bytes: {self._buffer[:header_index].hex()}")
-                    self._buffer = self._buffer[header_index:]
-            except ValueError:
-                # Không tìm thấy header, có thể buffer chứa toàn byte rác
-                logger.debug(f"No header found in buffer of size {len(self._buffer)}. Discarding entire buffer: {self._buffer.hex()}")
-                self._buffer.clear()
-                return
+        # Kiểm tra xem buffer có đủ dài để chứa một gói tin không
+        if len(self._buffer) < 11:  # Độ dài tối thiểu của một gói tin
+            return
 
-            if len(self._buffer) < self.PACKET_SIZE:
-                # Chưa đủ dữ liệu cho một gói tin hoàn chỉnh
-                break
+        # Tìm header (0x55) từ đầu buffer
+        while len(self._buffer) >= 11 and self._buffer[0] != 0x55:
+            self._buffer.pop(0)
+            logger.debug(f"Removed non-header byte, new buffer: {self._buffer.hex(' ')}")
 
-            # Lấy một gói tin tiềm năng
-            potential_packet = self._buffer[:self.PACKET_SIZE]
+        # Nếu không tìm thấy header, thoát
+        if len(self._buffer) < 11:
+            return
 
-            # Kiểm tra checksum
-            calculated_checksum = sum(potential_packet[:-1]) & 0xFF
-            packet_checksum = potential_packet[-1]
+        # Kiểm tra xem byte thứ hai có phải là một trong các loại gói tin hợp lệ không
+        packet_type = self._buffer[1]
+        if packet_type not in [self.PACKET_TYPE_ACCELERATION, 
+                             self.PACKET_TYPE_ANGULAR_VELOCITY,
+                             self.PACKET_TYPE_ANGLE]:
+            logger.warning(f"Invalid packet type: 0x{packet_type:02X}")
+            self._buffer.pop(0)  # Bỏ byte header
+            return
 
-            if calculated_checksum == packet_checksum:
-                # Checksum hợp lệ, xử lý gói tin
-                self._decode_packet_and_notify(potential_packet)
-                # Xóa gói tin đã xử lý khỏi buffer
-                self._buffer = self._buffer[self.PACKET_SIZE:]
-            else:
-                # Checksum không hợp lệ. Đây có thể là header giả.
-                # Bỏ qua byte header này và tìm header tiếp theo.
-                logger.warning(f"Checksum error. Packet: {potential_packet.hex()}. Calculated: {calculated_checksum:02X}, Got: {packet_checksum:02X}. Discarding header byte.")
-                self._buffer = self._buffer[1:]
-        
-        # Giới hạn kích thước buffer để tránh tràn bộ nhớ nếu liên tục nhận dữ liệu lỗi
-        max_buffer_size = self.PACKET_SIZE * 5 
-        if len(self._buffer) > max_buffer_size:
-            logger.warning(f"Parser buffer exceeded max size ({max_buffer_size}), truncating.")
-            self._buffer = self._buffer[-max_buffer_size:]
+        # Kiểm tra checksum
+        if not self._verify_checksum(self._buffer[:11]):
+            logger.warning(f"Checksum verification failed for packet type: 0x{packet_type:02X}")
+            self._buffer.pop(0)  # Bỏ byte header
+            return
+
+        # Xử lý gói tin hợp lệ
+        logger.info(f"Processing valid packet of type: 0x{packet_type:02X}")
+        self._last_packet_type_processed = packet_type
+        self._process_packet(self._buffer[:11])
+        self._buffer = self._buffer[11:]  # Xóa gói tin đã xử lý
 
 
     def _decode_packet_and_notify(self, packet: bytes) -> None:
@@ -252,3 +261,79 @@ class WitmotionParser:
     @staticmethod
     def get_known_data_keys() -> List[str]:
         return WitmotionParser.KNOWN_DATA_KEYS
+
+    def _process_packet(self, packet: bytes) -> None:
+        """
+        Xử lý gói tin đã được xác thực.
+        Args:
+            packet: Gói tin 11 byte đã được xác thực
+        """
+        packet_type = packet[1]
+        data_payload = packet[2:-1]  # 8 byte data
+
+        if packet_type == self.PACKET_TYPE_ACCELERATION:  # 0x51
+            ax = self._to_short(data_payload[0:2]) / 32768.0 * self.acc_range
+            ay = self._to_short(data_payload[2:4]) / 32768.0 * self.acc_range
+            az = self._to_short(data_payload[4:6]) / 32768.0 * self.acc_range
+            self.parsed_data_cache.set_value("accX", round(ax, 4))
+            self.parsed_data_cache.set_value("accY", round(ay, 4))
+            self.parsed_data_cache.set_value("accZ", round(az, 4))
+            logger.debug(f"Decoded ACC: X={ax:.2f}, Y={ay:.2f}, Z={az:.2f}")
+
+        elif packet_type == self.PACKET_TYPE_ANGULAR_VELOCITY:  # 0x52
+            wx = self._to_short(data_payload[0:2]) / 32768.0 * self.gyro_range
+            wy = self._to_short(data_payload[2:4]) / 32768.0 * self.gyro_range
+            wz = self._to_short(data_payload[4:6]) / 32768.0 * self.gyro_range
+            self.parsed_data_cache.set_value("gyroX", round(wx, 4))
+            self.parsed_data_cache.set_value("gyroY", round(wy, 4))
+            self.parsed_data_cache.set_value("gyroZ", round(wz, 4))
+            logger.debug(f"Decoded GYRO: X={wx:.2f}, Y={wy:.2f}, Z={wz:.2f}")
+
+        elif packet_type == self.PACKET_TYPE_ANGLE:  # 0x53
+            roll = self._to_short(data_payload[0:2]) / 32768.0 * self.angle_range
+            pitch = self._to_short(data_payload[2:4]) / 32768.0 * self.angle_range
+            yaw = self._to_short(data_payload[4:6]) / 32768.0 * self.angle_range
+            self.parsed_data_cache.set_value("angleX", round(roll, 4))
+            self.parsed_data_cache.set_value("angleY", round(pitch, 4))
+            self.parsed_data_cache.set_value("angleZ", round(yaw, 4))
+            logger.debug(f"Decoded ANGLE: Roll={roll:.2f}, Pitch={pitch:.2f}, Yaw={yaw:.2f}")
+
+        elif packet_type == self.PACKET_TYPE_MAGNETIC:  # 0x54
+            mx = self._to_short(data_payload[0:2])
+            my = self._to_short(data_payload[2:4])
+            mz = self._to_short(data_payload[4:6])
+            self.parsed_data_cache.set_value("magX", mx)
+            self.parsed_data_cache.set_value("magY", my)
+            self.parsed_data_cache.set_value("magZ", mz)
+            logger.debug(f"Decoded MAG: X={mx}, Y={my}, Z={mz}")
+
+        elif packet_type == self.PACKET_TYPE_QUATERNION:  # 0x59
+            q0 = self._to_short(data_payload[0:2]) / 32768.0
+            q1 = self._to_short(data_payload[2:4]) / 32768.0
+            q2 = self._to_short(data_payload[4:6]) / 32768.0
+            q3 = self._to_short(data_payload[6:8]) / 32768.0
+            self.parsed_data_cache.set_value("q0", round(q0, 6))
+            self.parsed_data_cache.set_value("q1", round(q1, 6))
+            self.parsed_data_cache.set_value("q2", round(q2, 6))
+            self.parsed_data_cache.set_value("q3", round(q3, 6))
+            logger.debug(f"Decoded QUAT: q0={q0:.4f}, q1={q1:.4f}, q2={q2:.4f}, q3={q3:.4f}")
+
+        elif packet_type == self.PACKET_TYPE_TIME:  # 0x50
+            year = data_payload[0] + 2000
+            month = data_payload[1]
+            day = data_payload[2]
+            hour = data_payload[3]
+            minute = data_payload[4]
+            second = data_payload[5]
+            millisecond = self._to_short(data_payload[6:8])
+            self.parsed_data_cache.set_value("year", year)
+            self.parsed_data_cache.set_value("month", month)
+            self.parsed_data_cache.set_value("day", day)
+            self.parsed_data_cache.set_value("hour", hour)
+            self.parsed_data_cache.set_value("minute", minute)
+            self.parsed_data_cache.set_value("second", second)
+            self.parsed_data_cache.set_value("millisecond", millisecond)
+            logger.debug(f"Decoded TIME: {year}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}.{millisecond:03d}")
+
+        else:
+            logger.debug(f"Unhandled packet type: 0x{packet_type:02X}")

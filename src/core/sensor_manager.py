@@ -70,10 +70,11 @@ class SensorManager:
     def _handle_sensor_data(self, sensor_id: str, data: Dict[str, Any]):
         if sensor_id in self.sensors and self.sensor_processor:
             sensor = self.sensors[sensor_id]
+            # Chỉ log dữ liệu ở mức debug
             logger.debug(f"[{sensor.name}] Received data at {sensor.data_timestamp:.3f}s: {data}")
             self.sensor_processor.update_sensor_data(sensor_id, data, sensor.data_timestamp)
-        # else:
-        #     logger.warning(f"Received data for unknown or inactive sensor_id: {sensor_id}")
+        else:
+            logger.warning(f"Received data for unknown or inactive sensor_id: {sensor_id}")
 
     def _handle_sensor_status_change(self, sensor_id: str, connected: bool, error_message: Optional[str]):
         logger.info(f"Status change for sensor {sensor_id}: Connected={connected}, Error='{error_message}'")

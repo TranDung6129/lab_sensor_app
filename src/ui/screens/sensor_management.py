@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                            QGroupBox, QDialog, QDialogButtonBox, QHeaderView,
                            QSpacerItem, QSizePolicy, QGridLayout, QTextEdit,
                            QMenu, QAction, QSplitter) # Thêm QMenu, QAction, QSplitter
-from PyQt5.QtCore import Qt, QTimer, QPoint # Thêm QPoint
+from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal # Thêm QPoint và pyqtSignal
 from PyQt5.QtGui import QIcon # Tùy chọn: thêm icon cho action
 import logging
 import psutil
@@ -254,6 +254,8 @@ class AddSensorDialog(QDialog):
 
 # --- Màn hình Quản lý Cảm biến Chính (SensorManagementScreen) ---
 class SensorManagementScreen(QWidget):
+    sensor_selected = pyqtSignal(str)  # Signal emitted when a sensor is selected
+    
     def __init__(self, sensor_manager, sensor_processor):
         super().__init__()
         self.sensor_manager = sensor_manager
@@ -479,6 +481,19 @@ class SensorManagementScreen(QWidget):
         self.sensors_table.resizeColumnsToContents()
         self.sensors_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.sensors_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+
+        # Connect selection changed signal
+        self.sensors_table.itemSelectionChanged.connect(self.on_sensor_selection_changed)
+
+    def on_sensor_selection_changed(self):
+        """Handle sensor selection change in the table."""
+        selected_items = self.sensors_table.selectedItems()
+        if selected_items:
+            row = selected_items[0].row()
+            sensor_id_item = self.sensors_table.item(row, 1)
+            if sensor_id_item:
+                sensor_id = sensor_id_item.text()
+                self.sensor_selected.emit(sensor_id)
 
     def update_resource_graphs_and_stats(self):
         # Cập nhật đồ thị tài nguyên

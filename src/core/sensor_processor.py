@@ -54,18 +54,19 @@ class SensorProcessor:
 
     def update_sensor_data(self, sensor_id: str, data: Dict[str, Any], timestamp: Optional[float] = None):
         if sensor_id not in self.active_sensors_config:
-            # logger.warning(f"Data received for unknown/inactive sensor: {sensor_id}")
+            logger.warning(f"Data received for unknown/inactive sensor: {sensor_id}")
             return
 
         if timestamp is None:
-            timestamp = time.time() # Sử dụng thời gian hệ thống nếu không có timestamp từ cảm biến
-        self.global_data_timestamp = timestamp # Cập nhật timestamp toàn cục
+            timestamp = time.time()
+        self.global_data_timestamp = timestamp
 
         sensor_name = self.active_sensors_config.get(sensor_id, {}).get('name', sensor_id)
+        # Chỉ log dữ liệu ở mức debug
         logger.debug(f"[{sensor_name}] Processing data at {timestamp:.3f}s: {data}")
 
         if sensor_id not in self.sensor_data_buffers:
-            self.sensor_data_buffers[sensor_id] = {} # Khởi tạo nếu chưa có (có thể xảy ra nếu add_sensor chưa kịp chạy)
+            self.sensor_data_buffers[sensor_id] = {}
 
         for key, value in data.items():
             if key not in self.sensor_data_buffers[sensor_id]:
@@ -75,15 +76,17 @@ class SensorProcessor:
                     logger.info(f"Discovered new data key '{key}' for sensor {sensor_id}")
 
             self.sensor_data_buffers[sensor_id][key].append((timestamp, value))
-            logger.debug(f"[{sensor_name}] Added data to buffer - Key: {key}, Timestamp: {timestamp:.3f}s, Value: {value}")
+            # Chỉ log thêm dữ liệu vào buffer ở mức debug
+            logger.debug(f"[{sensor_name}] Added data to buffer - Key: {key}, Value: {value}")
 
         self.fps_counter += 1
         current_time = time.perf_counter()
-        if current_time - self.last_fps_update_time >= 1.0: # Cập nhật FPS mỗi giây
+        if current_time - self.last_fps_update_time >= 1.0:
             self.current_fps = self.fps_counter / (current_time - self.last_fps_update_time)
+            # Chỉ log FPS mỗi giây
+            logger.info(f"[{sensor_name}] Current FPS: {self.current_fps:.2f}")
             self.fps_counter = 0
             self.last_fps_update_time = current_time
-            # logger.debug(f"Processor FPS: {self.current_fps:.2f}")
 
     def get_data_for_display(self, sensor_id: str, data_key: str, num_points: Optional[int] = None) -> Tuple[Optional[List[float]], Optional[List[Any]]]:
         """
@@ -142,3 +145,24 @@ class SensorProcessor:
     def get_latest_alerts(self) -> List[Dict[str, Any]]:
         # Cần có logic tạo alerts nếu ứng dụng có chức năng này
         return self.alerts # Hiện tại là rỗng
+
+    def get_sensor_data(self, sensor_id: str) -> Dict[str, Any]:
+        """
+        Lấy dữ liệu mới nhất của một cảm biến.
+        Args:
+            sensor_id: ID của cảm biến
+        Returns:
+            Dictionary chứa dữ liệu mới nhất của cảm biến, hoặc None nếu không có dữ liệu
+        """
+        if sensor_id not in self.sensor_data_buffers:
+            logger.warning(f"No data available for sensor {sensor_id}")
+            return {}
+
+        latest_data = {}
+        for key, buffer in self.sensor_data_buffers[sensor_id].items():
+            if buffer:  # Nếu buffer không rỗng
+                # Lấy giá trị mới nhất (tuple cuối cùng trong buffer)
+                timestamp, value = buffer[-1]
+                latest_data[key] = value
+
+        return latest_data

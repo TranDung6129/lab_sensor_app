@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QIcon, QFont
 import logging
+import time
 
 from .screens.dashboard import DashboardScreen
 from .screens.realtime import RealtimeScreen
@@ -222,7 +223,7 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(self.settings)
 
     def connect_signals(self):
-        pass
+        self.management.sensor_selected.connect(self.on_sensor_selected)
 
     def switch_screen(self, index):
         """Switch to the selected screen."""
@@ -237,10 +238,10 @@ class MainWindow(QMainWindow):
             status = "Connected" if self.processor.is_connected else "Disconnected"
             self.sensor_status.setText(f"Sensor: {status}")
         
-        # Update sampling rate
-        if self.processor and hasattr(self.processor, 'sample_rate'):
-            rate = self.processor.sample_rate
-            self.sampling_rate.setText(f"Rate: {rate:.1f} Hz")
+        # Update sampling rate (FPS)
+        if self.processor and hasattr(self.processor, 'get_fps'):
+            fps = self.processor.get_fps()
+            self.sampling_rate.setText(f"Rate: {fps:.1f} Hz")
         
         # Update timestamp
         from datetime import datetime
@@ -253,3 +254,56 @@ class MainWindow(QMainWindow):
             self.status_timer.stop()
         
         event.accept() 
+
+    def update_plots_data(self):
+        if not hasattr(self, '_last_update_time'):
+            self._last_update_time = time.time()
+            self._update_count = 0
+            return
+
+        current_time = time.time()
+        self._update_count += 1
+        
+        if current_time - self._last_update_time >= 1.0:  # Every second
+            update_rate = self._update_count / (current_time - self._last_update_time)
+            logger.info(f"Plot update rate: {update_rate:.1f} Hz")
+            self._last_update_time = current_time
+            self._update_count = 0
+
+    def on_sensor_selected(self, sensor_id: str):
+        """Handle sensor selection from management screen."""
+        logger.info(f"Sensor selected in MainWindow: {sensor_id}")
+        
+        if not sensor_id:
+            logger.warning("No sensor selected")
+            return
+
+        if not self.sensor_manager:
+            logger.error("Sensor manager not available")
+            return
+
+        sensor_instance = self.sensor_manager.get_sensor_instance(sensor_id)
+        if not sensor_instance:
+            logger.error(f"Sensor instance not found for ID: {sensor_id}")
+            return
+
+        # Update status bar
+        if hasattr(self, 'sensor_status'):
+            status = "Connected" if sensor_instance.connected else "Disconnected"
+            self.sensor_status.setText(f"Sensor: {status}")
+
+        # Update sampling rate if available
+        if hasattr(self, 'sampling_rate') and hasattr(sensor_instance, 'sample_rate'):
+            rate = sensor_instance.sample_rate
+            self.sampling_rate.setText(f"Rate: {rate:.1f} Hz")
+
+        # Notify other screens about sensor selection
+        if hasattr(self, 'realtime'):
+            self.realtime.on_sensor_selected(sensor_id)
+        if hasattr(self, 'frequency'):
+            self.frequency.on_sensor_selected(sensor_id)
+        if hasattr(self, 'analysis'):
+            self.analysis.on_sensor_selected(sensor_id)
+
+    def configure_plot_curves(self, plot_id: str):
+        logger.debug(f"Configuring plot {plot_id} with available keys: {self.available_data_keys_for_sensor}") 

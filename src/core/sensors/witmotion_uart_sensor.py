@@ -103,74 +103,54 @@ class WitMotionUARTSensor(BaseSensor):
         self.serial_connection = None
 
     def _read_data_loop(self) -> None:
-        logger.debug(f"[{self.name}] Data reading loop started.")
-        self.parser.clear_cached_data() # Xóa cache của parser khi bắt đầu luồng mới
-        self._current_data_packet.clear()
-        self._received_packets_in_current_cycle.clear()
-
+        logger.info(f"[{self.name}] Data reading loop started.")
+        
         while not self._stop_event.is_set():
-            if not self.serial_connection or not self.serial_connection.is_open:
-                if self.connected: # Chỉ log lỗi nếu đang nghĩ là connected
-                    logger.error(f"[{self.name}] Serial port is not open. Stopping data loop.")
-                    self.error_message = "Serial port closed unexpectedly during read."
-                    # Việc thay đổi self.connected nên được thực hiện qua self.disconnect() hoặc callback
-                    # để đảm bảo on_status_change_callback được gọi đúng cách.
-                    # Tạm thời:
-                    if self.on_status_change_callback:
-                        self.on_status_change_callback(self.sensor_id, False, self.error_message)
-                self._stop_event.set() # Dừng hẳn vòng lặp
-                break
+            if not self.connected or not self.serial_connection:
+                logger.warning(f"[{self.name}] Sensor not connected or serial connection lost.")
+                time.sleep(0.1)
+                continue
 
             try:
                 if self.serial_connection.in_waiting > 0:
                     bytes_to_read = self.serial_connection.in_waiting
                     raw_bytes = self.serial_connection.read(bytes_to_read)
                     if raw_bytes:
+                        # Chỉ log raw bytes ở mức debug
                         logger.debug(f"[{self.name}] Raw bytes received: {raw_bytes.hex(' ')}")
                         for byte_val in raw_bytes:
-                            self.parser.process_byte(byte_val) # Parser sẽ tích lũy byte
+                            self.parser.process_byte(byte_val)
 
-                        # Sau khi parser xử lý, lấy dữ liệu đã cache (nếu có)
-                        # Logic ở đây sẽ quyết định khi nào một "bản tin hoàn chỉnh" được hình thành
-                        newly_parsed = self.parser.get_parsed_data() # Lấy data từ cache của parser
+                        newly_parsed = self.parser.get_parsed_data()
                         if newly_parsed:
+                            # Chỉ log dữ liệu mới ở mức debug
                             logger.debug(f"[{self.name}] Newly parsed data: {newly_parsed}")
                             self._current_data_packet.update(newly_parsed)
-                            # Ghi nhận loại gói tin vừa xử lý từ parser (nếu parser có cung cấp thông tin này)
+                            
                             if hasattr(self.parser, '_last_packet_type_processed') and \
                                self.parser._last_packet_type_processed is not None:
                                 self._received_packets_in_current_cycle.add(self.parser._last_packet_type_processed)
+                                # Chỉ log trạng thái gói tin ở mức debug
                                 logger.debug(f"[{self.name}] Current received packets in cycle: {self._received_packets_in_current_cycle}")
 
-                            # Kiểm tra xem đã nhận đủ các gói tin trong một chu kỳ chưa
-                            # (ví dụ: ACC, GYRO, ANGLE)
                             if self._received_packets_in_current_cycle.issuperset(self._expected_packets_in_cycle):
                                 if self.on_data_callback and self._current_data_packet:
-                                    self.last_data = self._current_data_packet.copy() # Lưu lại cho get_sensor_info
+                                    self.last_data = self._current_data_packet.copy()
                                     self.data_timestamp = time.time()
-                                    logger.info(f"[{self.name}] Emitting complete data cycle with packets: {self._received_packets_in_current_cycle}")
-                                    logger.debug(f"[{self.name}] Emitted data: {self.last_data}")
+                                    # Chỉ log khi hoàn thành một chu kỳ dữ liệu
+                                    logger.info(f"[{self.name}] Completed data cycle with packets: {self._received_packets_in_current_cycle}")
                                     self.on_data_callback(self.sensor_id, self.last_data)
-                                # Reset cho chu kỳ mới
                                 self._current_data_packet.clear()
                                 self._received_packets_in_current_cycle.clear()
-                                self.parser.clear_cached_data() # Xóa cache của parser sau khi đã lấy và xử lý
-
-                else: # Không có dữ liệu đang chờ, ngủ một chút
-                    time.sleep(self._read_interval)
-
-            except serial.SerialException as e:
-                logger.error(f"[{self.name}] Serial exception in read loop: {e}")
-                self.error_message = f"Serial error during read: {e}"
-                if self.on_status_change_callback:
-                    self.on_status_change_callback(self.sensor_id, False, self.error_message)
-                self._stop_event.set() # Dừng vòng lặp
+                                self.parser.clear_cached_data()
+                else:
+                    time.sleep(0.001)
             except Exception as e:
-                logger.error(f"[{self.name}] Unexpected error in read loop: {e}", exc_info=True)
-                time.sleep(0.01) # Ngủ lâu hơn một chút nếu có lỗi lạ
+                logger.error(f"[{self.name}] Error in data reading loop: {e}", exc_info=True)
+                time.sleep(0.1)
 
         logger.debug(f"[{self.name}] Data reading loop stopped.")
-        self._disconnect_from_sensor() # Đảm bảo cổng được đóng khi luồng dừng
+        self._disconnect_from_sensor()
 
 
     def _process_raw_data(self, raw_data: Any) -> Optional[Dict[str, Any]]:
