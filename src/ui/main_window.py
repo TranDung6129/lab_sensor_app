@@ -10,7 +10,7 @@ from .screens.dashboard import DashboardScreen
 from .screens.realtime import RealtimeScreen
 from .screens.frequency import FrequencyScreen
 from .screens.spreadsheet import SpreadsheetScreen
-from .screens.anomaly import AnomalyScreen
+from .screens.analysis import AnalysisScreen
 from .screens.plugins import PluginsScreen
 from .screens.settings import SettingsScreen
 from .screens.sensor_management import SensorManagementScreen
@@ -143,7 +143,7 @@ class MainWindow(QMainWindow):
             ("Realtime", "realtime"),
             ("Frequency", "frequency"),
             ("Spreadsheet", "spreadsheet"),
-            ("Anomaly", "anomaly"),
+            ("Analysis", "analysis"),
             ("Plugins", "plugins"),
             ("Settings", "settings")
         ]
@@ -204,10 +204,10 @@ class MainWindow(QMainWindow):
         # Create screen instances
         self.dashboard = DashboardScreen(self.processor)
         self.management = SensorManagementScreen(self.sensor_manager, self.processor)
-        self.realtime = RealtimeScreen(self.processor)
-        self.frequency = FrequencyScreen(self.processor)
+        self.realtime = RealtimeScreen(self.processor, self.sensor_manager)
+        self.frequency = FrequencyScreen(self.processor, self.sensor_manager)
         self.spreadsheet = SpreadsheetScreen(self.processor)
-        self.anomaly = AnomalyScreen(self.processor)
+        self.analysis = AnalysisScreen(self.processor, self.sensor_manager)
         self.plugins = PluginsScreen(self.processor)
         self.settings = SettingsScreen(self.processor)
         
@@ -217,7 +217,7 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(self.realtime)
         self.content_stack.addWidget(self.frequency)
         self.content_stack.addWidget(self.spreadsheet)
-        self.content_stack.addWidget(self.anomaly)
+        self.content_stack.addWidget(self.analysis)
         self.content_stack.addWidget(self.plugins)
         self.content_stack.addWidget(self.settings)
 

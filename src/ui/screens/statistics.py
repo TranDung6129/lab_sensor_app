@@ -20,6 +20,7 @@ class StatisticsScreen(QWidget):
         self.time_data = []
         self.sensor_data = {}  # Lưu trữ dữ liệu theo sensor_id
         self.last_update = datetime.now()
+        self.selected_sensor_id = None  # Initialize selected_sensor_id
         self.selected_data_key = None  # Initialize selected_data_key
         
         self.setup_ui()
@@ -50,6 +51,12 @@ class StatisticsScreen(QWidget):
         self.sensor_combo.currentTextChanged.connect(self.on_sensor_changed)
         control_layout.addWidget(QLabel("Chọn cảm biến:"))
         control_layout.addWidget(self.sensor_combo)
+        
+        # Combo box chọn kênh dữ liệu
+        self.data_key_combo = QComboBox()
+        self.data_key_combo.currentTextChanged.connect(self.on_data_key_changed)
+        control_layout.addWidget(QLabel("Chọn kênh dữ liệu:"))
+        control_layout.addWidget(self.data_key_combo)
         
         # Combo box chọn khoảng thời gian
         self.time_range_combo = QComboBox()
@@ -136,11 +143,18 @@ class StatisticsScreen(QWidget):
             sensor_name = sensor.get_sensor_info().get('config', {}).get('name', sensor_id)
             self.sensor_combo.addItem(f"{sensor_name} ({sensor_id})", sensor_id)
             
-        # Khôi phục lựa chọn trước đó nếu có
-        if current_sensor:
-            index = self.sensor_combo.findText(current_sensor)
-            if index >= 0:
+        # Tự động chọn item đầu tiên nếu chưa có lựa chọn
+        if self.sensor_combo.count() > 0 and not self.selected_sensor_id:
+            self.sensor_combo.setCurrentIndex(0)  # Điều này sẽ trigger on_sensor_changed
+        elif self.selected_sensor_id:  # Khôi phục lựa chọn trước đó
+            index = self.sensor_combo.findData(self.selected_sensor_id)
+            if index != -1:
                 self.sensor_combo.setCurrentIndex(index)
+            else:  # Sensor cũ không còn, reset
+                self.selected_sensor_id = None
+                self.data_key_combo.clear()
+                if self.sensor_combo.count() > 0:
+                    self.sensor_combo.setCurrentIndex(0)
 
     def on_sensor_changed(self, sensor_text):
         """Xử lý khi người dùng chọn cảm biến khác."""
@@ -148,14 +162,35 @@ class StatisticsScreen(QWidget):
             return
             
         sensor_id = self.sensor_combo.currentData()
-        if sensor_id in self.sensor_data:
-            self.update_plot(sensor_id)
+        self.selected_sensor_id = sensor_id
+        
+        # Cập nhật data_key_combo
+        self.data_key_combo.clear()
+        if sensor_id and self.sensor_processor:
+            available_keys = self.sensor_processor.data_keys_by_sensor.get(sensor_id, [])
+            self.data_key_combo.addItems(available_keys)
+            
+            if self.data_key_combo.count() > 0:
+                self.data_key_combo.setCurrentIndex(0)  # Trigger on_data_key_changed
+            else:
+                self.selected_data_key = None
+                self.update_plot()  # Cập nhật đồ thị (sẽ rỗng)
         else:
-            self.sensor_data[sensor_id] = []
+            self.selected_data_key = None
+            self.update_plot()
+
+    def on_data_key_changed(self, data_key_text):
+        """Xử lý khi người dùng chọn kênh dữ liệu khác."""
+        if not data_key_text:
+            self.selected_data_key = None
+        else:
+            self.selected_data_key = data_key_text
+            
+        self.update_plot()
 
     def on_time_range_changed(self, time_range):
         """Xử lý khi người dùng thay đổi khoảng thời gian."""
-        self.update_plot(self.sensor_combo.currentData())
+        self.update_plot()
 
     def update_data(self):
         """Cập nhật dữ liệu từ cảm biến."""
@@ -169,47 +204,62 @@ class StatisticsScreen(QWidget):
         if len(self.sensor_manager.sensors) != self.sensor_combo.count():
             self.update_sensor_list()
         
-        # Cập nhật dữ liệu cho cảm biến đang được chọn
-        sensor_id = self.sensor_combo.currentData()
-        if sensor_id and sensor_id in self.sensor_manager.sensors:
-            sensor = self.sensor_manager.sensors[sensor_id]
-            if sensor.connected and sensor.last_data is not None:
-                # Thêm dữ liệu mới
-                self.sensor_data.setdefault(sensor_id, []).append({
-                    'timestamp': current_time,
-                    'value': sensor.last_data
-                })
-                
-                # Giới hạn số lượng điểm dữ liệu
-                if len(self.sensor_data[sensor_id]) > self.max_data_points:
-                    self.sensor_data[sensor_id] = self.sensor_data[sensor_id][-self.max_data_points:]
-                
-                self.update_plot(sensor_id)
-        
         # Cập nhật thống kê tổng hợp
         self.update_summary_stats()
         
         self.last_update = current_time
 
-    def update_plot(self, sensor_id):
+    def update_plot(self):
         """Cập nhật đồ thị với dữ liệu mới."""
-        if not self.sensor_processor:
+        if not self.sensor_processor or not self.selected_sensor_id or not self.selected_data_key:
+            self.plot_curve.setData([], [])
+            self.min_label.setText("N/A")
+            self.max_label.setText("N/A")
+            self.avg_label.setText("N/A")
+            self.std_label.setText("N/A")
             return
-        times, values = self.sensor_processor.get_data_for_display(sensor_id, self.selected_data_key, num_points=1000)
+
+        # Xác định khoảng thời gian từ time_range_combo
+        sensor_config = self.sensor_processor.active_sensors_config.get(self.selected_sensor_id, {}).get('config', {})
+        sampling_rate = sensor_config.get('sampling_rate', 200)  # Mặc định 200Hz
+
+        time_range_text = self.time_range_combo.currentText()
+        num_points = self.max_data_points  # Mặc định
+        if time_range_text == "1 phút":
+            num_points = 1 * 60 * sampling_rate
+        elif time_range_text == "5 phút":
+            num_points = 5 * 60 * sampling_rate
+        elif time_range_text == "15 phút":
+            num_points = 15 * 60 * sampling_rate
+        elif time_range_text == "30 phút":
+            num_points = 30 * 60 * sampling_rate
+        elif time_range_text == "1 giờ":
+            num_points = 60 * 60 * sampling_rate
+
+        # Giới hạn số điểm dữ liệu
+        num_points = min(num_points, self.max_data_points)
+
+        times, values = self.sensor_processor.get_data_for_display(
+            self.selected_sensor_id,
+            self.selected_data_key,
+            num_points=int(num_points)
+        )
+
         if times and values:
-            # Chuyển đổi times và values thành numpy array
             times_array = np.array(times)
             values_array = np.array(values)
             self.plot_curve.setData(times_array, values_array)
+
+            self.min_label.setText(f"{np.min(values_array):.2f}")
+            self.max_label.setText(f"{np.max(values_array):.2f}")
+            self.avg_label.setText(f"{np.mean(values_array):.2f}")
+            self.std_label.setText(f"{np.std(values_array):.2f}")
         else:
             self.plot_curve.setData([], [])
-        
-        # Cập nhật thống kê
-        if values:
-            self.min_label.setText(f"{min(values):.2f}")
-            self.max_label.setText(f"{max(values):.2f}")
-            self.avg_label.setText(f"{np.mean(values):.2f}")
-            self.std_label.setText(f"{np.std(values):.2f}")
+            self.min_label.setText("N/A")
+            self.max_label.setText("N/A")
+            self.avg_label.setText("N/A")
+            self.std_label.setText("N/A")
 
     def update_summary_stats(self):
         """Cập nhật thống kê tổng hợp."""

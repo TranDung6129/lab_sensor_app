@@ -16,9 +16,16 @@ class SpreadsheetScreen(QWidget):
         super().__init__()
         self.processor = processor
         self.data = None
+        self.selected_sensor_id = None
+        self.selected_data_keys = []
         
         # Initialize UI
         self.setup_ui()
+        
+        # Setup update timer for live data
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.update_live_data)
+        self.update_timer.start(1000)  # Update every second
         
         logger.info("SpreadsheetScreen initialized")
 
@@ -81,6 +88,48 @@ class SpreadsheetScreen(QWidget):
         
         controls_layout = QVBoxLayout(controls_frame)
         controls_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Data source selection
+        source_group = QGroupBox("Data Source")
+        source_layout = QVBoxLayout(source_group)
+        
+        # Sensor selection
+        sensor_layout = QHBoxLayout()
+        sensor_layout.addWidget(QLabel("Sensor:"))
+        self.sensor_combo = QComboBox()
+        self.sensor_combo.currentTextChanged.connect(self.on_sensor_changed)
+        sensor_layout.addWidget(self.sensor_combo)
+        source_layout.addLayout(sensor_layout)
+        
+        # Data key selection
+        key_layout = QVBoxLayout()
+        key_layout.addWidget(QLabel("Data Channels:"))
+        self.data_key_list = QTableWidget()
+        self.data_key_list.setColumnCount(2)
+        self.data_key_list.setHorizontalHeaderLabels(["Channel", "Selected"])
+        self.data_key_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.data_key_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        key_layout.addWidget(self.data_key_list)
+        source_layout.addLayout(key_layout)
+        
+        # Load live data button
+        load_btn = QPushButton("Load Live Data")
+        load_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                padding: 5px 10px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+        """)
+        load_btn.clicked.connect(self.load_live_data)
+        source_layout.addWidget(load_btn)
+        
+        controls_layout.addWidget(source_group)
         
         # Data import/export
         io_group = QGroupBox("Data I/O")
@@ -185,6 +234,9 @@ class SpreadsheetScreen(QWidget):
         content_layout.addWidget(controls_frame)
         
         layout.addLayout(content_layout)
+        
+        # Update sensor list
+        self.update_sensor_list()
 
     def create_toolbar(self):
         """Create the toolbar with data selection and controls."""
@@ -207,6 +259,7 @@ class SpreadsheetScreen(QWidget):
         
         self.source_combo = QComboBox()
         self.source_combo.addItems(["Live Data", "Recorded Data", "Imported Data"])
+        self.source_combo.currentTextChanged.connect(self.on_source_changed)
         layout.addWidget(self.source_combo)
         
         # Add spacer
@@ -226,9 +279,172 @@ class SpreadsheetScreen(QWidget):
                 background-color: #2980b9;
             }
         """)
+        refresh_btn.clicked.connect(self.refresh_data)
         layout.addWidget(refresh_btn)
         
         return toolbar
+
+    def update_sensor_list(self):
+        """Update the sensor list in the combo box."""
+        if not self.processor:
+            return
+            
+        current_sensor = self.sensor_combo.currentText()
+        self.sensor_combo.clear()
+        
+        active_sensors = self.processor.get_active_sensors_info()
+        for sensor_info in active_sensors:
+            sensor_id = sensor_info['id']
+            sensor_name = sensor_info['name']
+            self.sensor_combo.addItem(f"{sensor_name} ({sensor_id})", sensor_id)
+            
+        # Restore previous selection if possible
+        if current_sensor:
+            index = self.sensor_combo.findText(current_sensor)
+            if index >= 0:
+                self.sensor_combo.setCurrentIndex(index)
+
+    def on_sensor_changed(self, sensor_text):
+        """Handle sensor selection change."""
+        if not sensor_text:
+            return
+            
+        sensor_id = self.sensor_combo.currentData()
+        self.selected_sensor_id = sensor_id
+        
+        # Update data key list
+        self.update_data_key_list()
+
+    def update_data_key_list(self):
+        """Update the list of available data keys for the selected sensor."""
+        self.data_key_list.setRowCount(0)
+        
+        if not self.selected_sensor_id or not self.processor:
+            return
+            
+        available_keys = self.processor.data_keys_by_sensor.get(self.selected_sensor_id, [])
+        
+        for key in available_keys:
+            row = self.data_key_list.rowCount()
+            self.data_key_list.insertRow(row)
+            
+            # Add key name
+            key_item = QTableWidgetItem(key)
+            self.data_key_list.setItem(row, 0, key_item)
+            
+            # Add checkbox
+            checkbox = QCheckBox()
+            checkbox.setChecked(key in self.selected_data_keys)
+            checkbox.stateChanged.connect(lambda state, k=key: self.on_data_key_selection_changed(k, state))
+            self.data_key_list.setCellWidget(row, 1, checkbox)
+
+    def on_data_key_selection_changed(self, key, state):
+        """Handle data key selection change."""
+        if state == Qt.Checked:
+            if key not in self.selected_data_keys:
+                self.selected_data_keys.append(key)
+        else:
+            if key in self.selected_data_keys:
+                self.selected_data_keys.remove(key)
+
+    def on_source_changed(self, source):
+        """Handle data source change."""
+        if source == "Live Data":
+            self.update_timer.start()
+        else:
+            self.update_timer.stop()
+
+    def refresh_data(self):
+        """Refresh the data display."""
+        if self.source_combo.currentText() == "Live Data":
+            self.load_live_data()
+        else:
+            self.update_table()
+
+    def load_live_data(self):
+        """Load live data from the selected sensor and channels."""
+        if not self.selected_sensor_id or not self.selected_data_keys:
+            logger.warning("No sensor or data keys selected")
+            return
+            
+        try:
+            all_data_streams = {}
+            min_len = float('inf')
+            common_timestamps = None
+
+            for key in self.selected_data_keys:
+                ts, vals = self.processor.get_data_for_display(
+                    self.selected_sensor_id, 
+                    key, 
+                    num_points=None  # Get all available data
+                )
+                
+                if ts and vals:
+                    all_data_streams[key] = {
+                        'timestamps': np.array(ts),
+                        'values': np.array(vals)
+                    }
+                    
+                    if common_timestamps is None:
+                        common_timestamps = all_data_streams[key]['timestamps']
+                        min_len = len(common_timestamps)
+                    else:
+                        if not np.array_equal(common_timestamps, all_data_streams[key]['timestamps']):
+                            logger.warning(f"Timestamps not synchronized for channel: {key}")
+                            if len(all_data_streams[key]['timestamps']) == min_len:
+                                pass  # OK if lengths match
+                            else:
+                                del all_data_streams[key]
+                                continue
+                        min_len = min(min_len, len(all_data_streams[key]['values']))
+
+            if not all_data_streams or common_timestamps is None:
+                self.data = pd.DataFrame()
+                self.update_table()
+                return
+
+            df_data = {'timestamp': common_timestamps[:min_len]}
+            for key, stream_data in all_data_streams.items():
+                df_data[key] = stream_data['values'][:min_len]
+
+            self.data = pd.DataFrame(df_data)
+            self.update_table()
+            
+        except Exception as e:
+            logger.error(f"Error loading live data: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to load live data: {str(e)}")
+
+    def update_live_data(self):
+        """Update live data periodically."""
+        if self.source_combo.currentText() == "Live Data":
+            self.load_live_data()
+
+    def update_table(self):
+        """Update the table with current data."""
+        if self.data is None or self.data.empty:
+            self.table.setRowCount(0)
+            self.table.setColumnCount(0)
+            return
+            
+        # Set table dimensions
+        self.table.setRowCount(len(self.data))
+        self.table.setColumnCount(len(self.data.columns))
+        
+        # Set headers
+        self.table.setHorizontalHeaderLabels(self.data.columns)
+        
+        # Fill data
+        for i, row in enumerate(self.data.itertuples(index=False)):
+            for j, value in enumerate(row):
+                item = QTableWidgetItem(str(value))
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.table.setItem(i, j, item)
+        
+        # Resize columns
+        self.table.resizeColumnsToContents()
+        
+        # Resize rows
+        self.table.resizeRowsToContents()
 
     def import_data(self):
         """Import data from file."""
@@ -270,32 +486,6 @@ class SpreadsheetScreen(QWidget):
         except Exception as e:
             logger.error(f"Error exporting data: {e}")
             QMessageBox.critical(self, "Error", f"Failed to export data: {str(e)}")
-
-    def update_table(self):
-        """Update the table with current data."""
-        if self.data is None:
-            return
-            
-        # Clear existing data
-        self.table.clear()
-        
-        # Set column count and headers
-        self.table.setColumnCount(len(self.data.columns))
-        self.table.setHorizontalHeaderLabels(self.data.columns)
-        
-        # Set row count
-        self.table.setRowCount(len(self.data))
-        
-        # Fill data
-        for i in range(len(self.data)):
-            for j in range(len(self.data.columns)):
-                value = str(self.data.iloc[i, j])
-                item = QTableWidgetItem(value)
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self.table.setItem(i, j, item)
-                
-        # Resize columns to content
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
 
     def show_statistics(self):
         """Show statistical analysis of the data."""
@@ -392,4 +582,5 @@ class SpreadsheetScreen(QWidget):
 
     def closeEvent(self, event):
         """Handle widget close event."""
+        self.update_timer.stop()
         event.accept() 
